@@ -10,6 +10,24 @@ import streamlit as st
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="NGSS Toolkit (Skills & Standards)", page_icon="🔧", layout="wide")
 
+# Make sidebar narrower + tighten page padding
+st.markdown("""
+<style>
+  /* Sidebar width */
+  [data-testid="stSidebar"] {
+    width: 240px;           /* ← change to 220/260/etc if you like */
+    min-width: 240px;
+  }
+
+  /* Give the main content more room by trimming default padding */
+  .block-container {
+    padding-top: 1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+</style>
+""", unsafe_allow_html=True)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CONSTANTS (Skills view uses the SAME CSVs/behavior as your previous app)
 # ──────────────────────────────────────────────────────────────────────────────
