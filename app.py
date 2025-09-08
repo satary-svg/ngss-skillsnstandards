@@ -129,7 +129,7 @@ def render_table_html(df: pd.DataFrame) -> str:
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
     tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
 
-     return f"""
+    return f"""
     <div style="overflow:auto; border:1px solid #e5e7eb; border-radius:12px; max-height:80vh;">
       <table style="
             border-collapse:separate;
