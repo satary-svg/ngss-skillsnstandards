@@ -103,44 +103,68 @@ def _grade_sort_key(g: str) -> int:
     return 999 if not m else 100 + int(m.group())
 
 def render_skills_view(df: pd.DataFrame) -> None:
-    """Render grid like your previous app: Practice selector, grade chips, A0..A6 columns."""
+    """Practice selector, grade chips, A0..A6 columns.
+       If 'practice' col is missing, fall back to __source__ (CSV filename)."""
     st.title("NGSS Toolkit — Skills")
     st.caption("Select a practice and see which assignments address it, by grade.")
 
-    practices = sorted([p for p in df.get("practice", pd.Series(["All"]))
-                        .dropna().astype(str).unique()])
-    if not practices:
-        practices = ["All"]
-    left, right = st.columns([2, 3])
-    selected_practice = left.selectbox("NGSS Practice", practices, index=0)
+    # Build practice options
+    practice_col = None
+    practice_vals = []
 
-    all_grades = sorted([str(x) for x in df.get("grade", pd.Series([]))
-                         .dropna().unique()], key=_grade_sort_key)
+    if "practice" in df.columns and df["practice"].astype(str).str.strip().ne("").any():
+        practice_col = "practice"
+        practice_vals = sorted(df["practice"].dropna().astype(str).unique())
+    elif "__source__" in df.columns:
+        practice_col = "__source__"
+        # Nicify file names: strip extension, replace dashes/underscores
+        def pretty(x: str) -> str:
+            import os, re
+            base = os.path.splitext(os.path.basename(str(x)))[0]
+            base = re.sub(r"[_-]+", " ", base).strip()
+            return base
+        # Make a map so we show nice labels but filter by exact source value
+        sources = df["__source__"].dropna().astype(str).unique()
+        practice_vals = sorted([pretty(s) for s in sources])
+        source_map = {pretty(s): s for s in sources}
+    else:
+        practice_vals = ["All"]  # last resort
+
+    left, right = st.columns([2, 3])
+    selected = left.selectbox("NGSS Practice", ["All"] + practice_vals, index=0)
+
+    # Grade chips
+    all_grades = sorted([str(x) for x in df.get("grade", pd.Series([])).dropna().unique()],
+                        key=_grade_sort_key)
     default_grades = [g for g in _GRADE_ORDER if g in all_grades] or all_grades
     chosen_grades = right.multiselect("Grades to include", options=all_grades, default=default_grades)
 
+    # Filter
     work = df.copy()
-    if "practice" in work.columns and selected_practice != "All":
-        work = work[work["practice"].astype(str) == str(selected_practice)]
+    if selected != "All" and practice_col:
+        if practice_col == "__source__":
+            work = work[work["__source__"].astype(str) == source_map[selected]]
+        else:
+            work = work[work["practice"].astype(str) == selected]
     if chosen_grades:
         work = work[work["grade"].astype(str).isin(chosen_grades)]
 
-    # columns to display: grade + whichever of A0..A6 exist
+    # Build grid
     grid_cols = ["grade"] + [c for c in ["a0","a1","a2","a3","a4","a5","a6"] if c in work.columns]
     if "grade" not in work.columns or len(grid_cols) == 1:
         st.warning("I don’t see the expected columns for the Skills view. "
-                   "Your CSV should include `grade`, `practice`, and some of `A0…A6`.")
+                   "Your CSV should include `grade` and some of `A0…A6`.")
         st.dataframe(work, use_container_width=True, hide_index=True)
         return
 
     work = work[grid_cols].copy()
     work["__ord__"] = work["grade"].map(_grade_sort_key)
     work = work.sort_values("__ord__").drop(columns="__ord__")
-    # uppercase the A* headers for aesthetics
     headers = {c: c.upper() if c.startswith("a") else c.capitalize() for c in grid_cols}
     work = work.rename(columns=headers)
 
-    st.markdown(f"### NGSS — {selected_practice}")
+    heading = selected if selected != "All" else "All"
+    st.markdown(f"### NGSS — {heading}")
     st.dataframe(work, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------
