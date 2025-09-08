@@ -129,21 +129,37 @@ def render_table_html(df: pd.DataFrame) -> str:
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
     tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
 
-    return f"""
-    <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:12px;">
-      <table style="border-collapse:separate;border-spacing:0;width:100%;min-width:900px;table-layout:fixed;">
+     return f"""
+    <div style="overflow:auto; border:1px solid #e5e7eb; border-radius:12px; max-height:80vh;">
+      <table style="
+            border-collapse:separate;
+            border-spacing:0;
+            width:100%;
+            min-width:1100px;   /* allow more width */
+            table-layout:fixed;
+            font-size:14px;     /* slightly smaller font */
+      ">
         <style>
           table th, table td {{
-            border-bottom:1px solid #e5e7eb; vertical-align:top; padding:10px 12px;
-            word-wrap:break-word; overflow-wrap:break-word; white-space:normal;
+            border-bottom:1px solid #e5e7eb;
+            vertical-align:top;
+            padding:6px 8px;   /* more compact cells */
+            word-wrap:break-word;
+            overflow-wrap:break-word;
+            white-space:normal;
           }}
-          thead th {{ position:sticky; top:0; z-index:1; background:#f9fafb; font-weight:600; text-align:left; }}
+          thead th {{
+            position:sticky; top:0; z-index:1;
+            background:#f9fafb;
+            font-weight:600;
+            text-align:left;
+          }}
         </style>
-        {thead}{tbody}
+        {thead}
+        {tbody}
       </table>
     </div>
     """
-
 def render_skills() -> None:
     st.markdown(
         "<h1 style='margin-bottom:0.25rem;'>NGSS Practices Map (K–12 Prototype)</h1>"
