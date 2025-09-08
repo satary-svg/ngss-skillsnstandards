@@ -1,178 +1,229 @@
 # app.py
+import os
 import re
 from typing import Dict, List
 import pandas as pd
 import streamlit as st
 
-# ---------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # App config
-# ---------------------------------------------------------------------
-st.set_page_config(
-    page_title="NGSS Toolkit (Skills & Standards)",
-    page_icon="🔧",
-    layout="wide",
-)
+# ──────────────────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="NGSS Toolkit (Skills & Standards)", page_icon="🔧", layout="wide")
 
-# ---------------------------------------------------------------------
-# Header mapping (aliases → canonical column names)
-# Add more aliases if your CSVs use different headers.
-# ---------------------------------------------------------------------
-ALIAS_MAP: Dict[str, List[str]] = {
-    "grade":    ["grade", "gr", "g", "Grade"],
-    "practice": ["practice", "ngss_practice", "skill", "skills_practice", "Practice"],
-    # Standards-ish columns (optional)
-    "code":     ["code", "ngss", "id", "pe_code", "pe", "PE Code"],
-    "title":    ["title", "statement", "performance_expectation", "pe_statement",
-                 "Performance Expectation", "PE Statement"],
-    "domain":   ["domain", "topic", "disciplinary_core_idea", "dci_domain", "Domain"],
-    "dci":      ["dci", "disciplinary_core_idea", "core_idea", "DCI"],
-    "sep":      ["sep", "science_and_engineering_practices", "practice_sep", "SEP"],
-    "ccc":      ["ccc", "crosscutting_concepts", "crosscutting", "CCC"],
-    "notes":    ["notes", "description", "comment", "Notes", "Description"],
-    # Practices Map columns (A0..A6). Only the ones present will be shown.
-    "a0": ["a0", "A0"], "a1": ["a1", "A1"], "a2": ["a2", "A2"],
-    "a3": ["a3", "A3"], "a4": ["a4", "A4"], "a5": ["a5", "A5"], "a6": ["a6", "A6"],
+# ──────────────────────────────────────────────────────────────────────────────
+# CONSTANTS (Skills view uses the SAME CSVs/behavior as your previous app)
+# ──────────────────────────────────────────────────────────────────────────────
+DATA_DIR = "data"
+
+PRACTICES = {
+    "NGSS 1 — Asking questions & defining problems": {
+        "key": "ngss1",
+        "file": "NGSS1_Asking_Questions.csv",
+        "desc": "Practice 1"
+    },
+    "NGSS 2 — Developing & using models": {
+        "key": "ngss2",
+        "file": "NGSS_2_Developing_and_Using_Models.csv",
+        "desc": "Practice 2"
+    },
+    "NGSS 3 — Planning & carrying out investigations": {
+        "key": "ngss3",
+        "file": "NGSS3_Planning_Investigations.csv",
+        "desc": "Practice 3"
+    },
+    "NGSS 4 — Analyzing & interpreting data": {
+        "key": "ngss4",
+        "file": "NGSS_4_Analyzing_and_Interpreting_Data.csv",
+        "desc": "Practice 4"
+    },
+    "NGSS 5 — Using mathematical & computational thinking": {
+        "key": "ngss5",
+        "file": "NGSS_5_Using_Mathematical_and_Computational_Thinking.csv",
+        "desc": "Practice 5"
+    },
 }
+ASSIGNMENT_COLUMNS = ["A0", "A1", "A2", "A3", "A4", "A5", "A6"]
+GRADE_ORDER = ["4th", "5th", "6th", "7th", "8th", "9th", "10th", "11th"]
 
-PREFERRED_COL_ORDER = ["grade","practice","code","title","domain","dci","sep","ccc","notes",
-                       "a0","a1","a2","a3","a4","a5","a6"]
-
-# ---------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers shared
+# ──────────────────────────────────────────────────────────────────────────────
 def _normalize_header(h: str) -> str:
-    """lowercase, replace non-alnum with underscores, collapse repeats"""
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", (h or "").strip().lower())).strip("_")
 
+def filter_contains(df: pd.DataFrame, search: str, col_filters: Dict[str, str]) -> pd.DataFrame:
+    out = df.copy()
+    if search:
+        s = search.lower()
+        m = pd.Series(False, index=out.index)
+        for c in out.columns:
+            m |= out[c].astype(str).str.lower().str.contains(s, na=False)
+        out = out[m]
+    for c, v in (col_filters or {}).items():
+        if v:
+            out = out[out[c].astype(str).str.lower().str.contains(v.lower(), na=False)]
+    return out
+
+def csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SKILLS VIEW  — EXACTLY your previous app’s behavior/UI
+# ──────────────────────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def load_practice_df(filename: str) -> pd.DataFrame:
+    path = os.path.join(DATA_DIR, filename)
+    df = pd.read_csv(path, dtype=str).fillna("-")
+    cols = ["Grade"] + [c for c in ASSIGNMENT_COLUMNS if c in df.columns]
+    df = df[[c for c in cols if c in df.columns]]
+    df["__order"] = df["Grade"].apply(lambda g: GRADE_ORDER.index(g) if g in GRADE_ORDER else 999)
+    df = df.sort_values("__order").drop(columns="__order")
+    return df
+
+def md_cell(text: str) -> str:
+    if not isinstance(text, str) or text.strip() in ("", "-"):
+        return "<span style='color:#9ca3af;'>–</span>"
+    html = text.replace("\r\n", "\n").replace("\r", "\n").strip().replace("\n", "<br>")
+    return html
+
+def render_table_html(df: pd.DataFrame) -> str:
+    for col in ASSIGNMENT_COLUMNS:
+        if col not in df.columns:
+            df[col] = "-"
+    df = df[["Grade"] + ASSIGNMENT_COLUMNS]
+
+    thead = (
+        "<thead><tr>"
+        "<th style='position:sticky;left:0;z-index:2;background:#f9fafb;border-right:1px solid #e5e7eb;'>Grade</th>"
+        + "".join(f"<th>{col}</th>" for col in ASSIGNMENT_COLUMNS)
+        + "</tr></thead>"
+    )
+
+    body_rows = []
+    for _, row in df.iterrows():
+        cells = []
+        grade_html = f"<td style='position:sticky;left:0;z-index:1;background:#fff;border-right:1px solid #e5e7eb;font-weight:600;'>{row['Grade']}</td>"
+        cells.append(grade_html)
+        for col in ASSIGNMENT_COLUMNS:
+            content = md_cell(row[col]).replace("**", "")
+            cell_html = "<div style='line-height:1.25;'>"
+            first = content.split("<br>")[0] if "<br>" in content else content
+            cell_html += f"<div style='font-weight:600;text-decoration:underline;margin-bottom:0.25rem;'>{first}</div>"
+            if "<br>" in content:
+                parts = content.split("<br>")[1:]
+                bullets = []
+                for ln in parts:
+                    s = ln.strip()
+                    if s in ("", "–"):
+                        continue
+                    if s.startswith("•"):
+                        bullets.append(f"<li>{s[1:].strip()}</li>")
+                    elif s.startswith("- "):
+                        bullets.append(f"<li>{s[2:].strip()}</li>")
+                    else:
+                        bullets.append(f"<li>{s}</li>")
+                if bullets:
+                    cell_html += f"<ul style='margin:0 0 0.25rem 1rem;padding:0;'>{''.join(bullets)}</ul>"
+            cell_html += "</div>"
+            cells.append(f"<td>{cell_html}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
+
+    return f"""
+    <div style="overflow:auto;border:1px solid #e5e7eb;border-radius:12px;">
+      <table style="border-collapse:separate;border-spacing:0;width:100%;min-width:900px;table-layout:fixed;">
+        <style>
+          table th, table td {{
+            border-bottom:1px solid #e5e7eb; vertical-align:top; padding:10px 12px;
+            word-wrap:break-word; overflow-wrap:break-word; white-space:normal;
+          }}
+          thead th {{ position:sticky; top:0; z-index:1; background:#f9fafb; font-weight:600; text-align:left; }}
+        </style>
+        {thead}{tbody}
+      </table>
+    </div>
+    """
+
+def render_skills() -> None:
+    st.markdown(
+        "<h1 style='margin-bottom:0.25rem;'>NGSS Practices Map (K–12 Prototype)</h1>"
+        "<div style='color:#6b7280;margin-bottom:1rem;'>Select a practice and see which assignments address it, by grade.</div>",
+        unsafe_allow_html=True,
+    )
+    with st.sidebar:
+        st.markdown("### Choose NGSS Practice")
+        practice_label = st.selectbox("Practice", list(PRACTICES.keys()), index=0)
+        st.markdown("---")
+        st.markdown("### Filter Grades")
+        selected_grades = st.multiselect("Grades to include", options=GRADE_ORDER, default=GRADE_ORDER)
+        st.markdown("---")
+        st.caption("This view shows which assignments (A0–A6) address each NGSS practice. "
+                   "Cells show the unit title (bold/underlined) and activities as bullets.")
+
+    meta = PRACTICES[practice_label]
+    df = load_practice_df(meta["file"])
+    if selected_grades:
+        df = df[df["Grade"].isin(selected_grades)]
+    else:
+        st.info("No grades selected. Choose at least one grade in the sidebar.")
+        return
+
+    st.markdown(f"<h3 style='margin:0.25rem 0 0.5rem 0;'>{practice_label}</h3>", unsafe_allow_html=True)
+    st.markdown(render_table_html(df), unsafe_allow_html=True)
+
+    st.download_button(
+        label="Download this view as CSV",
+        data=df.to_csv(index=False).encode("utf-8"),
+        file_name=f"{meta['key']}_filtered_view.csv",
+        mime="text/csv",
+    )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# STANDARDS VIEW  — searchable/filterable table (same as before)
+# ──────────────────────────────────────────────────────────────────────────────
+ALIAS_MAP: Dict[str, List[str]] = {
+    "grade": ["grade", "gr", "g", "Grade"],
+    "code":  ["code", "ngss", "id", "pe_code", "pe", "PE Code"],
+    "title": ["title", "statement", "performance_expectation", "pe_statement", "Performance Expectation"],
+    "domain":["domain", "topic", "disciplinary_core_idea", "dci_domain"],
+    "dci":   ["dci", "disciplinary_core_idea", "core_idea"],
+    "sep":   ["sep", "science_and_engineering_practices"],
+    "ccc":   ["ccc", "crosscutting_concepts"],
+    "notes": ["notes", "description", "comment"],
+}
+PREFERRED_ORDER = ["grade","code","title","domain","dci","sep","ccc","notes"]
+
 def canonicalize_headers(df: pd.DataFrame) -> pd.DataFrame:
-    # build map from original → canonical
     mapping = {}
     for col in df.columns:
         norm = _normalize_header(col)
         mapped = None
         for canon, variants in ALIAS_MAP.items():
             if norm in [v.lower() for v in variants]:
-                mapped = canon
-                break
+                mapped = canon; break
         mapping[col] = mapped or norm
     out = df.rename(columns=mapping)
-
-    # Ensure grade column exists so filters work
-    if "grade" not in out.columns:
-        out["grade"] = ""
-
-    # reorder columns: preferred first, keep the rest
-    ordered = [c for c in PREFERRED_COL_ORDER if c in out.columns]
+    if "grade" not in out.columns: out["grade"] = ""
+    ordered = [c for c in PREFERRED_ORDER if c in out.columns]
     remaining = [c for c in out.columns if c not in ordered]
     return out[ordered + remaining]
 
 def add_grade_if_missing(df: pd.DataFrame, grade_value: str) -> pd.DataFrame:
-    if not grade_value:
-        return df
+    if not grade_value: return df
     out = df.copy()
     out["grade"] = out["grade"].fillna("").astype(str)
     needs = out["grade"].str.strip() == ""
     out.loc[needs, "grade"] = str(grade_value)
     return out
 
-def filter_contains(df: pd.DataFrame, search: str, col_filters: Dict[str,str]) -> pd.DataFrame:
-    out = df.copy()
-    if search:
-        s = search.lower()
-        mask = pd.Series(False, index=out.index)
-        for col in out.columns:
-            mask |= out[col].astype(str).str.lower().str.contains(s, na=False)
-        out = out[mask]
-    for col, val in (col_filters or {}).items():
-        if val:
-            out = out[out[col].astype(str).str.lower().str.contains(val.lower(), na=False)]
-    return out
-
-def csv_bytes(df: pd.DataFrame) -> bytes:
-    return df.to_csv(index=False).encode("utf-8")
-
-# ---------------------------------------------------------------------
-# SKILLS (Practices Map) view
-# ---------------------------------------------------------------------
-_GRADE_ORDER = ["4th","5th","6th","7th","8th","9th","10th","11th","12th","K","1st","2nd","3rd"]
-def _grade_sort_key(g: str) -> int:
-    g = str(g).strip()
-    if g in _GRADE_ORDER:
-        return _GRADE_ORDER.index(g)
-    m = re.search(r"\d+", g)
-    return 999 if not m else 100 + int(m.group())
-
-def render_skills_view(df: pd.DataFrame) -> None:
-    """Practice selector, grade chips, A0..A6 columns.
-       If 'practice' col is missing, fall back to __source__ (CSV filename)."""
-    st.title("NGSS Toolkit — Skills")
-    st.caption("Select a practice and see which assignments address it, by grade.")
-
-    # Build practice options
-    practice_col = None
-    practice_vals = []
-
-    if "practice" in df.columns and df["practice"].astype(str).str.strip().ne("").any():
-        practice_col = "practice"
-        practice_vals = sorted(df["practice"].dropna().astype(str).unique())
-    elif "__source__" in df.columns:
-        practice_col = "__source__"
-        # Nicify file names: strip extension, replace dashes/underscores
-        def pretty(x: str) -> str:
-            import os, re
-            base = os.path.splitext(os.path.basename(str(x)))[0]
-            base = re.sub(r"[_-]+", " ", base).strip()
-            return base
-        # Make a map so we show nice labels but filter by exact source value
-        sources = df["__source__"].dropna().astype(str).unique()
-        practice_vals = sorted([pretty(s) for s in sources])
-        source_map = {pretty(s): s for s in sources}
-    else:
-        practice_vals = ["All"]  # last resort
-
-    left, right = st.columns([2, 3])
-    selected = left.selectbox("NGSS Practice", ["All"] + practice_vals, index=0)
-
-    # Grade chips
-    all_grades = sorted([str(x) for x in df.get("grade", pd.Series([])).dropna().unique()],
-                        key=_grade_sort_key)
-    default_grades = [g for g in _GRADE_ORDER if g in all_grades] or all_grades
-    chosen_grades = right.multiselect("Grades to include", options=all_grades, default=default_grades)
-
-    # Filter
-    work = df.copy()
-    if selected != "All" and practice_col:
-        if practice_col == "__source__":
-            work = work[work["__source__"].astype(str) == source_map[selected]]
-        else:
-            work = work[work["practice"].astype(str) == selected]
-    if chosen_grades:
-        work = work[work["grade"].astype(str).isin(chosen_grades)]
-
-    # Build grid
-    grid_cols = ["grade"] + [c for c in ["a0","a1","a2","a3","a4","a5","a6"] if c in work.columns]
-    if "grade" not in work.columns or len(grid_cols) == 1:
-        st.warning("I don’t see the expected columns for the Skills view. "
-                   "Your CSV should include `grade` and some of `A0…A6`.")
-        st.dataframe(work, use_container_width=True, hide_index=True)
-        return
-
-    work = work[grid_cols].copy()
-    work["__ord__"] = work["grade"].map(_grade_sort_key)
-    work = work.sort_values("__ord__").drop(columns="__ord__")
-    headers = {c: c.upper() if c.startswith("a") else c.capitalize() for c in grid_cols}
-    work = work.rename(columns=headers)
-
-    heading = selected if selected != "All" else "All"
-    st.markdown(f"### NGSS — {heading}")
-    st.dataframe(work, use_container_width=True, hide_index=True)
-
-# ---------------------------------------------------------------------
-# STANDARDS (table) view
-# ---------------------------------------------------------------------
-def render_standards_view(df: pd.DataFrame) -> None:
+def render_standards() -> None:
     st.title("NGSS Toolkit — Standards")
     st.caption("Upload CSVs, search/filter, show/hide columns, and export the filtered view.")
+
+    df = st.session_state.get("standards_df", pd.DataFrame())
+    if df.empty:
+        st.info("No rows yet. Use the sidebar to upload CSVs or load from `/data`.")
+        return
 
     c1, c2, c3, c4 = st.columns([2,2,2,1])
     search = c1.text_input("Search across all fields", "")
@@ -201,86 +252,64 @@ def render_standards_view(df: pd.DataFrame) -> None:
 
     st.write(f"**{len(work):,}** rows matched.")
     st.dataframe(work, use_container_width=True, hide_index=True)
-    st.download_button(
-        "Download filtered CSV",
-        data=csv_bytes(work),
-        file_name="ngss_standards_filtered.csv",
-        mime="text/csv",
-    )
+    st.download_button("Download filtered CSV", data=csv_bytes(work),
+                       file_name="ngss_standards_filtered.csv", mime="text/csv")
 
-# ---------------------------------------------------------------------
-# Session state for datasets
-# ---------------------------------------------------------------------
-if "skills_df" not in st.session_state:
-    st.session_state.skills_df = pd.DataFrame()
+# ──────────────────────────────────────────────────────────────────────────────
+# Session state
+# ──────────────────────────────────────────────────────────────────────────────
 if "standards_df" not in st.session_state:
     st.session_state.standards_df = pd.DataFrame()
 
-# ---------------------------------------------------------------------
-# Sidebar — mode + data ingest
-# ---------------------------------------------------------------------
-st.sidebar.title("NGSS Toolkit")
+# ──────────────────────────────────────────────────────────────────────────────
+# Sidebar: mode + per-mode controls
+# ──────────────────────────────────────────────────────────────────────────────
 mode = st.sidebar.radio("View", ["Skills", "Standards"], horizontal=True)
 
-with st.sidebar.expander("Upload CSV(s)", expanded=True):
-    uploaded = st.file_uploader("Choose one or more CSV files", type=["csv"], accept_multiple_files=True)
-    default_grade = st.selectbox("Assign grade (used when missing in CSV)", ["", "4th","5th","6th","7th","8th","9th","10th","11th","12th","K","1st","2nd","3rd"], index=0)
-    if st.button("Add to dataset"):
-        frames = []
-        for file in uploaded or []:
-            df = pd.read_csv(file)
-            df = canonicalize_headers(df)
-            df = add_grade_if_missing(df, default_grade)
-            frames.append(df)
-        if frames:
-            new_df = pd.concat(frames, ignore_index=True)
-            if mode == "Skills":
-                st.session_state.skills_df = pd.concat([st.session_state.skills_df, new_df], ignore_index=True)
-            else:
-                st.session_state.standards_df = pd.concat([st.session_state.standards_df, new_df], ignore_index=True)
-            st.success(f"Added {sum(len(f) for f in frames):,} rows to {mode}.")
-
-with st.sidebar.expander("Load CSVs from /data"):
-    import glob, os
-    if st.button("Load /data into current view"):
-        paths = glob.glob("data/*.csv")
-        if not paths:
-            st.info("No CSV files found in /data. Commit some later.")
-        frames = []
-        for p in paths:
-            try:
-                df = pd.read_csv(p)
+if mode == "Standards":
+    with st.sidebar.expander("Upload CSV(s)", expanded=True):
+        uploaded = st.file_uploader("Choose one or more CSV files", type=["csv"], accept_multiple_files=True)
+        default_grade = st.selectbox("Assign grade (used when missing in CSV)",
+                                     ["","4th","5th","6th","7th","8th","9th","10th","11th"], index=0)
+        if st.button("Add to Standards dataset"):
+            frames = []
+            for file in uploaded or []:
+                df = pd.read_csv(file)
                 df = canonicalize_headers(df)
+                df = add_grade_if_missing(df, default_grade)
                 frames.append(df)
-            except Exception as e:
-                st.warning(f"Could not read {os.path.basename(p)}: {e}")
-        if frames:
-            loaded = pd.concat(frames, ignore_index=True)
-            if mode == "Skills":
-                st.session_state.skills_df = pd.concat([st.session_state.skills_df, loaded], ignore_index=True)
-            else:
+            if frames:
+                new_df = pd.concat(frames, ignore_index=True)
+                st.session_state.standards_df = pd.concat([st.session_state.standards_df, new_df], ignore_index=True)
+                st.success(f"Added {sum(len(f) for f in frames):,} rows.")
+
+    with st.sidebar.expander("Load CSVs from /data"):
+        import glob
+        if st.button("Load /data into Standards"):
+            paths = glob.glob(os.path.join(DATA_DIR, "*.csv"))
+            if not paths:
+                st.info("No CSV files found in /data.")
+            frames = []
+            for p in paths:
+                try:
+                    df = pd.read_csv(p)
+                    df = canonicalize_headers(df)
+                    frames.append(df)
+                except Exception as e:
+                    st.warning(f"Could not read {os.path.basename(p)}: {e}")
+            if frames:
+                loaded = pd.concat(frames, ignore_index=True)
                 st.session_state.standards_df = pd.concat([st.session_state.standards_df, loaded], ignore_index=True)
-            st.success(f"Loaded {len(loaded):,} rows from /data into {mode}.")
+                st.success(f"Loaded {len(loaded):,} rows from /data.")
 
-if st.sidebar.button("Clear current dataset"):
-    if mode == "Skills":
-        st.session_state.skills_df = pd.DataFrame()
-    else:
+    if st.sidebar.button("Clear Standards dataset"):
         st.session_state.standards_df = pd.DataFrame()
-    st.toast(f"Cleared {mode} dataset")
+        st.toast("Cleared Standards dataset")
 
-# ---------------------------------------------------------------------
-# Main routing
-# ---------------------------------------------------------------------
-df = st.session_state.skills_df if mode == "Skills" else st.session_state.standards_df
-
-if df.empty:
-    st.title(f"NGSS Toolkit — {mode}")
-    st.info("No rows yet. Use the sidebar to upload CSVs or load from `/data`.")
+# ──────────────────────────────────────────────────────────────────────────────
+# Route
+# ──────────────────────────────────────────────────────────────────────────────
+if mode == "Skills":
+    render_skills()
 else:
-    if mode == "Skills":
-        render_skills_view(df)
-        st.markdown("---")
-        st.caption("Columns A0–A6 come directly from your CSV headers; only present columns are shown.")
-    else:
-        render_standards_view(df)
+    render_standards()
